@@ -1,0 +1,119 @@
+---
+output: html_document
+---
+
+```{r echo = F}
+knitr::opts_chunk$set(echo = T)
+```
+
+# Estimates of flow-weighted mean concentrations
+
+Load libraries and import data:
+```{r, message = F, warning = F}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+
+# metal data
+dat <- read.csv('data/raw/Trace_Metals_Apr2019.csv', stringsAsFactors = F)
+
+# watershed area data
+wshed <- read_excel('data/raw/SDRS Revised StationID Table.xlsx', skip = 2)
+```
+
+Format watershed data:
+
+* select only watershed name and area
+* rename columns
+* remove numbers from site, correct USJ to USJC to match metal sites
+```{r}
+wshed <- wshed %>% 
+  select(`Station Code`, Area) %>% 
+  na.omit %>% 
+  rename(
+    SITE = `Station Code`, 
+    AREAKM2 = Area
+  ) %>% 
+  mutate(
+    SITE = gsub('[0-9]*$', '', SITE),
+    SITE = ifelse(SITE == 'USJ', 'USJC', SITE)
+  )
+```
+
+Format metal data:
+
+* remove unnecessary columns
+* separete site and storm numbers into two columns
+* format date time by combining date and time
+* join wshed area to data
+* put in long format by consituent
+* concentration value as numeric
+
+```{r}
+dat <- dat %>%
+  select(-SIZE, -GEO) %>% 
+  unite('DATETIME', DATE, TIME) %>% 
+  mutate(
+    STRM = gsub('^[a-z,A-Z]*', '', SITE),
+    STRM = ifelse(STRM == '', 1, STRM),
+    SITE = gsub('[0-9]*$', '', SITE),
+    DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8')
+  ) %>% 
+  left_join(wshed, by = 'SITE') %>% 
+  gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %>% 
+  mutate(
+    VAL = as.numeric(VAL)
+  )
+```
+
+Group the metals data by units to calculate:
+```{r}
+datgrp <- dat %>% 
+  group_by(SITE, AREAKM2, SEASON, TYPE, VAR) %>% 
+  nest
+datgrp
+```
+
+A function that estimates flow-weighted mean concentrations:
+```{r}
+emc_fun <- function(x){
+
+  # estimate emc
+  x <- x %>% 
+    na.omit %>% 
+    mutate(
+      litersmin = FLOWCMS * 60 * 1000, 
+      elapsed_min = c(1, diff(DATETIME) * 24 * 60), 
+      liters = litersmin * elapsed_min,
+      litersresult = liters * VAL
+    )
+
+  totalvol <- sum(x$liters)
+  massemis <- cumsum(x$litersresult) %>% max
+  emc <- massemis / totalvol
+  
+  out <- data.frame(liters = totalvol, massemis = massemis, emc = emc)
+  
+  return(out)
+  
+}
+```
+
+Apply the function to each value in `data`:
+```{r}
+datgrp <- datgrp %>% 
+  mutate(
+    emc = map(data, emc_fun)
+  )
+datgrp
+```
+
+Expand dataset into results;
+```{r}
+datgrp <- datgrp %>% 
+  select(-data) %>% 
+  unnest
+datgrp
+```
+
+
