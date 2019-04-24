@@ -345,6 +345,8 @@ wshed &lt;- read_excel('data/raw/SDRS Revised StationID Table.xlsx', skip = 2)</
 <li>format date time by combining date and time</li>
 <li>join wshed area to data</li>
 <li>put in long format by consituent</li>
+<li>concentration value as numeric</li>
+<li>remove “DF” (dissolved fraction) variables</li>
 </ul>
 <pre class="r"><code>dat &lt;- dat %&gt;%
   select(-SIZE, -GEO) %&gt;% 
@@ -356,13 +358,18 @@ wshed &lt;- read_excel('data/raw/SDRS Revised StationID Table.xlsx', skip = 2)</
     DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8')
   ) %&gt;% 
   left_join(wshed, by = 'SITE') %&gt;% 
-  gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2)</code></pre>
+  gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %&gt;% 
+  mutate(
+    VAL = as.numeric(VAL)
+  ) %&gt;% 
+  filter(!grepl('^DF', VAR))</code></pre>
+<pre><code>## Warning: NAs introduced by coercion</code></pre>
 <p>Group the metals data by units to calculate:</p>
 <pre class="r"><code>datgrp &lt;- dat %&gt;% 
   group_by(SITE, AREAKM2, SEASON, TYPE, VAR) %&gt;% 
   nest
 datgrp</code></pre>
-<pre><code>## # A tibble: 884 x 6
+<pre><code>## # A tibble: 650 x 6
 ##    SITE  AREAKM2 SEASON TYPE  VAR   data             
 ##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt; &lt;list&gt;           
 ##  1 ACC   46.1    S      D     Cl    &lt;tibble [5 x 3]&gt; 
@@ -375,11 +382,68 @@ datgrp</code></pre>
 ##  8 PVC   43.1    S      D     Cl    &lt;tibble [12 x 3]&gt;
 ##  9 PVC   43.1    W      D     Cl    &lt;tibble [5 x 3]&gt; 
 ## 10 SANT  17      W      D     Cl    &lt;tibble [7 x 3]&gt; 
-## # ... with 874 more rows</code></pre>
+## # ... with 640 more rows</code></pre>
 <p>A function that estimates flow-weighted mean concentrations:</p>
 <pre class="r"><code>emc_fun &lt;- function(x){
+
+  # estimate emc
+  x &lt;- x %&gt;% 
+    na.omit %&gt;% 
+    mutate(
+      litersmin = FLOWCMS * 60 * 1000, 
+      elapsed_min = c(1, difftime(DATETIME[-1], DATETIME[-nrow(.)], units = 'mins')),
+      liters = litersmin * elapsed_min,
+      litersresult = liters * VAL
+    )
+
+  totalvol &lt;- sum(x$liters)
+  massemis &lt;- cumsum(x$litersresult) %&gt;% max
+  emc &lt;- massemis / totalvol
+
+  out &lt;- data.frame(liters = totalvol, massemis = massemis, emc = emc)
+  
+  return(out)
   
 }</code></pre>
+<p>Apply the function to each value in <code>data</code>:</p>
+<pre class="r"><code>datgrp &lt;- datgrp %&gt;% 
+  mutate(
+    emc = map(data, emc_fun)
+  )
+datgrp</code></pre>
+<pre><code>## # A tibble: 650 x 7
+##    SITE  AREAKM2 SEASON TYPE  VAR   data              emc                 
+##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt; &lt;list&gt;            &lt;list&gt;              
+##  1 ACC   46.1    S      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+##  2 ACC   46.1    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+##  3 CONC  116     S      D     Cl    &lt;tibble [2 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+##  4 KC    39.9    S      D     Cl    &lt;tibble [10 x 3]&gt; &lt;data.frame [1 x 3]&gt;
+##  5 KC    39.9    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+##  6 LCC   23.3    S      D     Cl    &lt;tibble [14 x 3]&gt; &lt;data.frame [1 x 3]&gt;
+##  7 LCC   23.3    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+##  8 PVC   43.1    S      D     Cl    &lt;tibble [12 x 3]&gt; &lt;data.frame [1 x 3]&gt;
+##  9 PVC   43.1    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+## 10 SANT  17      W      D     Cl    &lt;tibble [7 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
+## # ... with 640 more rows</code></pre>
+<p>Expand dataset into results;</p>
+<pre class="r"><code>datgrp &lt;- datgrp %&gt;% 
+  select(-data) %&gt;% 
+  unnest
+datgrp</code></pre>
+<pre><code>## # A tibble: 650 x 8
+##    SITE  AREAKM2 SEASON TYPE  VAR       liters     massemis   emc
+##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt;      &lt;dbl&gt;        &lt;dbl&gt; &lt;dbl&gt;
+##  1 ACC   46.1    S      D     Cl    261001260.  7281837638.  27.9
+##  2 ACC   46.1    W      D     Cl     73557420   2063276561.  28.0
+##  3 CONC  116     S      D     Cl      1383900    151329465  109. 
+##  4 KC    39.9    S      D     Cl    249871080   6876207367.  27.5
+##  5 KC    39.9    W      D     Cl     32615460    933773533.  28.6
+##  6 LCC   23.3    S      D     Cl    220010400   4669424919.  21.2
+##  7 LCC   23.3    W      D     Cl     32613360    736865192.  22.6
+##  8 PVC   43.1    S      D     Cl    173018040   6582823121.  38.0
+##  9 PVC   43.1    W      D     Cl     15008580    602869210.  40.2
+## 10 SANT  17      W      D     Cl    621600900  11073715962   17.8
+## # ... with 640 more rows</code></pre>
 </div>
 
 

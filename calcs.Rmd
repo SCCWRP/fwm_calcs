@@ -48,6 +48,7 @@ Format metal data:
 * join wshed area to data
 * put in long format by consituent
 * concentration value as numeric
+* remove "DF" (dissolved fraction) variables
 
 ```{r}
 dat <- dat %>%
@@ -63,7 +64,8 @@ dat <- dat %>%
   gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %>% 
   mutate(
     VAL = as.numeric(VAL)
-  )
+  ) %>% 
+  filter(!grepl('^DF', VAR))
 ```
 
 Group the metals data by units to calculate:
@@ -83,7 +85,7 @@ emc_fun <- function(x){
     na.omit %>% 
     mutate(
       litersmin = FLOWCMS * 60 * 1000, 
-      elapsed_min = c(1, diff(DATETIME) * 24 * 60), 
+      elapsed_min = c(1, difftime(DATETIME[-1], DATETIME[-nrow(.)], units = 'mins')),
       liters = litersmin * elapsed_min,
       litersresult = liters * VAL
     )
@@ -91,7 +93,7 @@ emc_fun <- function(x){
   totalvol <- sum(x$liters)
   massemis <- cumsum(x$litersresult) %>% max
   emc <- massemis / totalvol
-  
+
   out <- data.frame(liters = totalvol, massemis = massemis, emc = emc)
   
   return(out)
