@@ -3,7 +3,8 @@ output: html_document
 ---
 
 ```{r echo = F}
-knitr::opts_chunk$set(echo = T)
+knitr::opts_chunk$set(echo = T, warning = F)
+options(dplyr.width = Inf)
 ```
 
 # Estimates of flow-weighted mean concentrations
@@ -47,8 +48,9 @@ Format metal data:
 * format date time by combining date and time
 * join wshed area to data
 * put in long format by consituent
-* concentration value as numeric
 * remove "DF" (dissolved fraction) variables
+* concentration value as numeric
+* add units column
 
 ```{r}
 dat <- dat %>%
@@ -56,22 +58,27 @@ dat <- dat %>%
   unite('DATETIME', DATE, TIME) %>% 
   mutate(
     STRM = gsub('^[a-z,A-Z]*', '', SITE),
-    STRM = ifelse(STRM == '', 1, STRM),
+    STRM = ifelse(STRM == '', 'x', STRM),
     SITE = gsub('[0-9]*$', '', SITE),
-    DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8')
+    DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8'),
+    YR = year(DATETIME)
   ) %>% 
   left_join(wshed, by = 'SITE') %>% 
-  gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %>% 
+  gather('VAR', 'VAL', -SITE, -STRM, -DATETIME, -YR, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %>% 
+  filter(!grepl('^DF', VAR)) %>% 
   mutate(
-    VAL = as.numeric(VAL)
-  ) %>% 
-  filter(!grepl('^DF', VAR))
+    VAL = as.numeric(VAL),
+    UNIT = case_when(
+      VAR %in% c('Cl', 'Hard', 'S04', 'TDS', 'TotAlk', 'TSS') ~ 'mg/L', 
+      T ~ 'ug/L'
+    )
+  ) 
 ```
 
-Group the metals data by units to calculate:
+Group the metals data by aggregations to calculate:
 ```{r}
 datgrp <- dat %>% 
-  group_by(SITE, AREAKM2, SEASON, TYPE, VAR) %>% 
+  group_by(SITE, STRM, UNIT, AREAKM2, SEASON, YR, TYPE, VAR) %>% 
   nest
 datgrp
 ```
@@ -80,21 +87,22 @@ A function that estimates flow-weighted mean concentrations:
 ```{r}
 emc_fun <- function(x){
 
-  # estimate emc
+  # get supporting data for calcs
   x <- x %>% 
     na.omit %>% 
     mutate(
       litersmin = FLOWCMS * 60 * 1000, 
       elapsed_min = c(1, difftime(DATETIME[-1], DATETIME[-nrow(.)], units = 'mins')),
       liters = litersmin * elapsed_min,
-      litersresult = liters * VAL
+      litersresult = liters * VAL # either mg or ug depending on constituent
     )
 
-  totalvol <- sum(x$liters)
+  # mass emissions, elapsed days, emc
   massemis <- cumsum(x$litersresult) %>% max
-  emc <- massemis / totalvol
+  dys <- difftime(max(x$DATETIME), min(x$DATETIME), units = 'days') %>% as.numeric
+  emc <- massemis / sum(x$liters)
 
-  out <- data.frame(liters = totalvol, massemis = massemis, emc = emc)
+  out <- data.frame(massemis = massemis, dys = dys, emc = emc)
   
   return(out)
   
@@ -118,4 +126,14 @@ datgrp <- datgrp %>%
 datgrp
 ```
 
-
+Estimate mass loadings as kg/day:
+```{r}
+datgrp <- datgrp %>% 
+  mutate(
+    massload = case_when(
+      UNIT %in% 'mg/L' ~ massemis * 1e-6 / dys, 
+      UNIT %in% 'ug/L' ~ massemis * 1e-9 / dys
+    )
+  )
+datgrp
+```

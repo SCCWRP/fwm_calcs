@@ -345,62 +345,68 @@ wshed &lt;- read_excel('data/raw/SDRS Revised StationID Table.xlsx', skip = 2)</
 <li>format date time by combining date and time</li>
 <li>join wshed area to data</li>
 <li>put in long format by consituent</li>
-<li>concentration value as numeric</li>
 <li>remove “DF” (dissolved fraction) variables</li>
+<li>concentration value as numeric</li>
+<li>add units column</li>
 </ul>
 <pre class="r"><code>dat &lt;- dat %&gt;%
   select(-SIZE, -GEO) %&gt;% 
   unite('DATETIME', DATE, TIME) %&gt;% 
   mutate(
     STRM = gsub('^[a-z,A-Z]*', '', SITE),
-    STRM = ifelse(STRM == '', 1, STRM),
+    STRM = ifelse(STRM == '', 'x', STRM),
     SITE = gsub('[0-9]*$', '', SITE),
-    DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8')
+    DATETIME = mdy_hm(DATETIME, tz = 'Etc/GMT+8'),
+    YR = year(DATETIME)
   ) %&gt;% 
   left_join(wshed, by = 'SITE') %&gt;% 
-  gather('VAR', 'VAL', -SITE, -DATETIME, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %&gt;% 
+  gather('VAR', 'VAL', -SITE, -STRM, -DATETIME, -YR, -TYPE, -SEASON, -FLOWCMS, -AREAKM2) %&gt;% 
+  filter(!grepl('^DF', VAR)) %&gt;% 
   mutate(
-    VAL = as.numeric(VAL)
-  ) %&gt;% 
-  filter(!grepl('^DF', VAR))</code></pre>
-<pre><code>## Warning: NAs introduced by coercion</code></pre>
-<p>Group the metals data by units to calculate:</p>
+    VAL = as.numeric(VAL),
+    UNIT = case_when(
+      VAR %in% c('Cl', 'Hard', 'S04', 'TDS', 'TotAlk', 'TSS') ~ 'mg/L', 
+      T ~ 'ug/L'
+    )
+  ) </code></pre>
+<p>Group the metals data by aggregations to calculate:</p>
 <pre class="r"><code>datgrp &lt;- dat %&gt;% 
-  group_by(SITE, AREAKM2, SEASON, TYPE, VAR) %&gt;% 
+  group_by(SITE, STRM, UNIT, AREAKM2, SEASON, YR, TYPE, VAR) %&gt;% 
   nest
 datgrp</code></pre>
-<pre><code>## # A tibble: 650 x 6
-##    SITE  AREAKM2 SEASON TYPE  VAR   data             
-##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt; &lt;list&gt;           
-##  1 ACC   46.1    S      D     Cl    &lt;tibble [5 x 3]&gt; 
-##  2 ACC   46.1    W      D     Cl    &lt;tibble [5 x 3]&gt; 
-##  3 CONC  116     S      D     Cl    &lt;tibble [2 x 3]&gt; 
-##  4 KC    39.9    S      D     Cl    &lt;tibble [10 x 3]&gt;
-##  5 KC    39.9    W      D     Cl    &lt;tibble [5 x 3]&gt; 
-##  6 LCC   23.3    S      D     Cl    &lt;tibble [14 x 3]&gt;
-##  7 LCC   23.3    W      D     Cl    &lt;tibble [5 x 3]&gt; 
-##  8 PVC   43.1    S      D     Cl    &lt;tibble [12 x 3]&gt;
-##  9 PVC   43.1    W      D     Cl    &lt;tibble [5 x 3]&gt; 
-## 10 SANT  17      W      D     Cl    &lt;tibble [7 x 3]&gt; 
-## # ... with 640 more rows</code></pre>
+<pre><code>## # A tibble: 840 x 9
+##    SITE  STRM  UNIT  AREAKM2 SEASON    YR TYPE  VAR   data            
+##    &lt;chr&gt; &lt;chr&gt; &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;dbl&gt; &lt;chr&gt; &lt;chr&gt; &lt;list&gt;          
+##  1 ACC   x     mg/L  46.1    S       2012 D     Cl    &lt;tibble [2 x 3]&gt;
+##  2 ACC   x     mg/L  46.1    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+##  3 ACC   x     mg/L  46.1    S       2013 D     Cl    &lt;tibble [3 x 3]&gt;
+##  4 CONC  x     mg/L  116     S       2013 D     Cl    &lt;tibble [2 x 3]&gt;
+##  5 KC    x     mg/L  39.9    S       2012 D     Cl    &lt;tibble [6 x 3]&gt;
+##  6 KC    x     mg/L  39.9    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+##  7 KC    x     mg/L  39.9    S       2013 D     Cl    &lt;tibble [4 x 3]&gt;
+##  8 LCC   x     mg/L  23.3    S       2012 D     Cl    &lt;tibble [9 x 3]&gt;
+##  9 LCC   x     mg/L  23.3    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+## 10 LCC   x     mg/L  23.3    S       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+## # ... with 830 more rows</code></pre>
 <p>A function that estimates flow-weighted mean concentrations:</p>
 <pre class="r"><code>emc_fun &lt;- function(x){
 
-  # estimate emc
+  # get supporting data for calcs
   x &lt;- x %&gt;% 
     na.omit %&gt;% 
     mutate(
       litersmin = FLOWCMS * 60 * 1000, 
       elapsed_min = c(1, difftime(DATETIME[-1], DATETIME[-nrow(.)], units = 'mins')),
       liters = litersmin * elapsed_min,
-      litersresult = liters * VAL
+      litersresult = liters * VAL # either mg or ug depending on constituent
     )
 
-  totalvol &lt;- sum(x$liters)
+  # mass emissions, elapsed days, emc
   massemis &lt;- cumsum(x$litersresult) %&gt;% max
-  emc &lt;- massemis / totalvol
+  dys &lt;- difftime(max(x$DATETIME), min(x$DATETIME), units = 'days') %&gt;% as.numeric
+  emc &lt;- massemis / sum(x$liters)
 
-  out &lt;- data.frame(liters = totalvol, massemis = massemis, emc = emc)
+  out &lt;- data.frame(massemis = massemis, dys = dys, emc = emc)
   
   return(out)
   
@@ -411,39 +417,98 @@ datgrp</code></pre>
     emc = map(data, emc_fun)
   )
 datgrp</code></pre>
-<pre><code>## # A tibble: 650 x 7
-##    SITE  AREAKM2 SEASON TYPE  VAR   data              emc                 
-##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt; &lt;list&gt;            &lt;list&gt;              
-##  1 ACC   46.1    S      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-##  2 ACC   46.1    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-##  3 CONC  116     S      D     Cl    &lt;tibble [2 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-##  4 KC    39.9    S      D     Cl    &lt;tibble [10 x 3]&gt; &lt;data.frame [1 x 3]&gt;
-##  5 KC    39.9    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-##  6 LCC   23.3    S      D     Cl    &lt;tibble [14 x 3]&gt; &lt;data.frame [1 x 3]&gt;
-##  7 LCC   23.3    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-##  8 PVC   43.1    S      D     Cl    &lt;tibble [12 x 3]&gt; &lt;data.frame [1 x 3]&gt;
-##  9 PVC   43.1    W      D     Cl    &lt;tibble [5 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-## 10 SANT  17      W      D     Cl    &lt;tibble [7 x 3]&gt;  &lt;data.frame [1 x 3]&gt;
-## # ... with 640 more rows</code></pre>
+<pre><code>## # A tibble: 840 x 10
+##    SITE  STRM  UNIT  AREAKM2 SEASON    YR TYPE  VAR   data            
+##    &lt;chr&gt; &lt;chr&gt; &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;dbl&gt; &lt;chr&gt; &lt;chr&gt; &lt;list&gt;          
+##  1 ACC   x     mg/L  46.1    S       2012 D     Cl    &lt;tibble [2 x 3]&gt;
+##  2 ACC   x     mg/L  46.1    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+##  3 ACC   x     mg/L  46.1    S       2013 D     Cl    &lt;tibble [3 x 3]&gt;
+##  4 CONC  x     mg/L  116     S       2013 D     Cl    &lt;tibble [2 x 3]&gt;
+##  5 KC    x     mg/L  39.9    S       2012 D     Cl    &lt;tibble [6 x 3]&gt;
+##  6 KC    x     mg/L  39.9    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+##  7 KC    x     mg/L  39.9    S       2013 D     Cl    &lt;tibble [4 x 3]&gt;
+##  8 LCC   x     mg/L  23.3    S       2012 D     Cl    &lt;tibble [9 x 3]&gt;
+##  9 LCC   x     mg/L  23.3    W       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+## 10 LCC   x     mg/L  23.3    S       2013 D     Cl    &lt;tibble [5 x 3]&gt;
+##    emc                 
+##    &lt;list&gt;              
+##  1 &lt;data.frame [1 x 3]&gt;
+##  2 &lt;data.frame [1 x 3]&gt;
+##  3 &lt;data.frame [1 x 3]&gt;
+##  4 &lt;data.frame [1 x 3]&gt;
+##  5 &lt;data.frame [1 x 3]&gt;
+##  6 &lt;data.frame [1 x 3]&gt;
+##  7 &lt;data.frame [1 x 3]&gt;
+##  8 &lt;data.frame [1 x 3]&gt;
+##  9 &lt;data.frame [1 x 3]&gt;
+## 10 &lt;data.frame [1 x 3]&gt;
+## # ... with 830 more rows</code></pre>
 <p>Expand dataset into results;</p>
 <pre class="r"><code>datgrp &lt;- datgrp %&gt;% 
   select(-data) %&gt;% 
   unnest
 datgrp</code></pre>
-<pre><code>## # A tibble: 650 x 8
-##    SITE  AREAKM2 SEASON TYPE  VAR       liters     massemis   emc
-##    &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;chr&gt; &lt;chr&gt;      &lt;dbl&gt;        &lt;dbl&gt; &lt;dbl&gt;
-##  1 ACC   46.1    S      D     Cl    261001260.  7281837638.  27.9
-##  2 ACC   46.1    W      D     Cl     73557420   2063276561.  28.0
-##  3 CONC  116     S      D     Cl      1383900    151329465  109. 
-##  4 KC    39.9    S      D     Cl    249871080   6876207367.  27.5
-##  5 KC    39.9    W      D     Cl     32615460    933773533.  28.6
-##  6 LCC   23.3    S      D     Cl    220010400   4669424919.  21.2
-##  7 LCC   23.3    W      D     Cl     32613360    736865192.  22.6
-##  8 PVC   43.1    S      D     Cl    173018040   6582823121.  38.0
-##  9 PVC   43.1    W      D     Cl     15008580    602869210.  40.2
-## 10 SANT  17      W      D     Cl    621600900  11073715962   17.8
-## # ... with 640 more rows</code></pre>
+<pre><code>## # A tibble: 840 x 11
+##    SITE  STRM  UNIT  AREAKM2 SEASON    YR TYPE  VAR      massemis   dys
+##    &lt;chr&gt; &lt;chr&gt; &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;dbl&gt; &lt;chr&gt; &lt;chr&gt;       &lt;dbl&gt; &lt;dbl&gt;
+##  1 ACC   x     mg/L  46.1    S       2012 D     Cl          9083.  14.0
+##  2 ACC   x     mg/L  46.1    W       2013 D     Cl    2063276561.  53.9
+##  3 ACC   x     mg/L  46.1    S       2013 D     Cl     644453363.  31.1
+##  4 CONC  x     mg/L  116     S       2013 D     Cl     151329465   16.0
+##  5 KC    x     mg/L  39.9    S       2012 D     Cl    1375326319.  70.0
+##  6 KC    x     mg/L  39.9    W       2013 D     Cl     933773533.  53.9
+##  7 KC    x     mg/L  39.9    S       2013 D     Cl     427586577   31.0
+##  8 LCC   x     mg/L  23.3    S       2012 D     Cl     887667297  112. 
+##  9 LCC   x     mg/L  23.3    W       2013 D     Cl     736865192.  53.9
+## 10 LCC   x     mg/L  23.3    S       2013 D     Cl     543740918.  56  
+##      emc
+##    &lt;dbl&gt;
+##  1  25.2
+##  2  28.0
+##  3  30.0
+##  4 109. 
+##  5  24.8
+##  6  28.6
+##  7  26.6
+##  8  20.8
+##  9  22.6
+## 10  22.2
+## # ... with 830 more rows</code></pre>
+<p>Estimate mass loadings as kg/day:</p>
+<pre class="r"><code>datgrp &lt;- datgrp %&gt;% 
+  mutate(
+    massload = case_when(
+      UNIT %in% 'mg/L' ~ massemis * 1e-6 / dys, 
+      UNIT %in% 'ug/L' ~ massemis * 1e-9 / dys
+    )
+  )
+datgrp</code></pre>
+<pre><code>## # A tibble: 840 x 12
+##    SITE  STRM  UNIT  AREAKM2 SEASON    YR TYPE  VAR      massemis   dys
+##    &lt;chr&gt; &lt;chr&gt; &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;  &lt;dbl&gt; &lt;chr&gt; &lt;chr&gt;       &lt;dbl&gt; &lt;dbl&gt;
+##  1 ACC   x     mg/L  46.1    S       2012 D     Cl          9083.  14.0
+##  2 ACC   x     mg/L  46.1    W       2013 D     Cl    2063276561.  53.9
+##  3 ACC   x     mg/L  46.1    S       2013 D     Cl     644453363.  31.1
+##  4 CONC  x     mg/L  116     S       2013 D     Cl     151329465   16.0
+##  5 KC    x     mg/L  39.9    S       2012 D     Cl    1375326319.  70.0
+##  6 KC    x     mg/L  39.9    W       2013 D     Cl     933773533.  53.9
+##  7 KC    x     mg/L  39.9    S       2013 D     Cl     427586577   31.0
+##  8 LCC   x     mg/L  23.3    S       2012 D     Cl     887667297  112. 
+##  9 LCC   x     mg/L  23.3    W       2013 D     Cl     736865192.  53.9
+## 10 LCC   x     mg/L  23.3    S       2013 D     Cl     543740918.  56  
+##      emc  massload
+##    &lt;dbl&gt;     &lt;dbl&gt;
+##  1  25.2  0.000650
+##  2  28.0 38.3     
+##  3  30.0 20.7     
+##  4 109.   9.45    
+##  5  24.8 19.6     
+##  6  28.6 17.3     
+##  7  26.6 13.8     
+##  8  20.8  7.93    
+##  9  22.6 13.7     
+## 10  22.2  9.71    
+## # ... with 830 more rows</code></pre>
 </div>
 
 
