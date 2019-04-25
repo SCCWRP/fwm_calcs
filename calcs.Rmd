@@ -145,7 +145,7 @@ Estimate flux rates as ratio between kg/yr and watershed area (km2):
 ```{r}
 datgrp <- datgrp %>% 
   mutate(
-    fluxrate = massload_kgdy * 365 / AREAKM2
+    fluxrate_kgyrkm2 = massload_kgdy * 365 / AREAKM2
   )
 datgrp
 ```

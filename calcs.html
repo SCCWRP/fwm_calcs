@@ -515,7 +515,7 @@ datgrp</code></pre>
 <p>Estimate flux rates as ratio between kg/yr and watershed area (km2):</p>
 <pre class="r"><code>datgrp &lt;- datgrp %&gt;% 
   mutate(
-    fluxrate = massload_kgdy * 365 / AREAKM2
+    fluxrate_kgyrkm2 = massload_kgdy * 365 / AREAKM2
   )
 datgrp</code></pre>
 <pre><code>## # A tibble: 840 x 13
@@ -531,18 +531,18 @@ datgrp</code></pre>
 ##  8 LCC   x     mg/L     23.3 S       2012 D     Cl     887667.   112. 
 ##  9 LCC   x     mg/L     23.3 W       2013 D     Cl     736865.    53.9
 ## 10 LCC   x     mg/L     23.3 S       2013 D     Cl     543741.    56  
-##    emc_gl massload_kgdy  fluxrate
-##     &lt;dbl&gt;         &lt;dbl&gt;     &lt;dbl&gt;
-##  1 0.0252      0.000650   0.00515
-##  2 0.0280     38.3      303.     
-##  3 0.0300     20.7      164.     
-##  4 0.109       9.45      29.7    
-##  5 0.0248     19.6      180.     
-##  6 0.0216     13.1      119.     
-##  7 0.0205     10.2       93.1    
-##  8 0.0208      7.93     124.     
-##  9 0.0226     13.7      214.     
-## 10 0.0222      9.71     152.     
+##    emc_gl massload_kgdy fluxrate_kgyrkm2
+##     &lt;dbl&gt;         &lt;dbl&gt;            &lt;dbl&gt;
+##  1 0.0252      0.000650          0.00515
+##  2 0.0280     38.3             303.     
+##  3 0.0300     20.7             164.     
+##  4 0.109       9.45             29.7    
+##  5 0.0248     19.6             180.     
+##  6 0.0216     13.1             119.     
+##  7 0.0205     10.2              93.1    
+##  8 0.0208      7.93            124.     
+##  9 0.0226     13.7             214.     
+## 10 0.0222      9.71            152.     
 ## # ... with 830 more rows</code></pre>
 </div>
 
