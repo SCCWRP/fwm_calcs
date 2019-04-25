@@ -37,7 +37,8 @@ wshed <- wshed %>%
   ) %>% 
   mutate(
     SITE = gsub('[0-9]*$', '', SITE),
-    SITE = ifelse(SITE == 'USJ', 'USJC', SITE)
+    SITE = ifelse(SITE == 'USJ', 'USJC', SITE),
+    AREAKM2 = as.numeric(AREAKM2)
   )
 ```
 
@@ -85,11 +86,10 @@ datgrp
 
 A function that estimates flow-weighted mean concentrations:
 ```{r}
-emc_fun <- function(x){
+emc_fun <- function(UNIT, data){
 
   # get supporting data for calcs
-  x <- x %>% 
-    na.omit %>% 
+  data <- data %>% 
     mutate(
       litersmin = FLOWCMS * 60 * 1000, 
       elapsed_min = c(1, difftime(DATETIME[-1], DATETIME[-nrow(.)], units = 'mins')),
@@ -97,12 +97,18 @@ emc_fun <- function(x){
       litersresult = liters * VAL # either mg or ug depending on constituent
     )
 
-  # mass emissions, elapsed days, emc
-  massemis <- cumsum(x$litersresult) %>% max
-  dys <- difftime(max(x$DATETIME), min(x$DATETIME), units = 'days') %>% as.numeric
-  emc <- massemis / sum(x$liters)
+  # mass emissions, conver to g
+  massemis <- data$litersresult %>% na.omit %>% cumsum %>% max
+  massemis_g <- case_when(
+    UNIT %in% 'mg/L' ~ massemis * 1e-3, 
+    UNIT %in% 'ug/L' ~ massemis * 1e-6
+  )
+  
+  # elapsed days, emc
+  dys <- difftime(max(data$DATETIME), min(data$DATETIME), units = 'days') %>% as.numeric
+  emc_gl <- massemis_g / sum(data$liters, na.rm = T)
 
-  out <- data.frame(massemis = massemis, dys = dys, emc = emc)
+  out <- data.frame(massemis_g = massemis_g, dys = dys, emc_gl = emc_gl)
   
   return(out)
   
@@ -113,7 +119,7 @@ Apply the function to each value in `data`:
 ```{r}
 datgrp <- datgrp %>% 
   mutate(
-    emc = map(data, emc_fun)
+    emc = pmap(list(UNIT, data), emc_fun)
   )
 datgrp
 ```
@@ -130,10 +136,17 @@ Estimate mass loadings as kg/day:
 ```{r}
 datgrp <- datgrp %>% 
   mutate(
-    massload = case_when(
-      UNIT %in% 'mg/L' ~ massemis * 1e-6 / dys, 
-      UNIT %in% 'ug/L' ~ massemis * 1e-9 / dys
-    )
+    massload_kgdy = massemis_g * 1e-3 / dys
   )
 datgrp
 ```
+
+Estimate flux rates as ratio between kg/yr and watershed area (km2):
+```{r}
+datgrp <- datgrp %>% 
+  mutate(
+    fluxrate = massload_kgdy * 365 / AREAKM2
+  )
+datgrp
+```
+
