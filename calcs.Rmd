@@ -1,5 +1,8 @@
 ---
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
 ---
 
 ```{r echo = F}
@@ -76,7 +79,10 @@ dat <- dat %>%
   ) 
 ```
 
+## All groupings
+
 Group the metals data by aggregations to calculate:
+
 ```{r}
 datgrp <- dat %>% 
   group_by(SITE, STRM, UNIT, AREAKM2, SEASON, YR, TYPE, VAR) %>% 
@@ -106,9 +112,10 @@ emc_fun <- function(UNIT, data){
   
   # elapsed days, emc
   dys <- difftime(max(data$DATETIME), min(data$DATETIME), units = 'days') %>% as.numeric
-  emc_gl <- massemis_g / sum(data$liters, na.rm = T)
+  liter_total <- sum(data$liters, na.rm = T)
+  emc_gl <- massemis_g / liter_total
 
-  out <- data.frame(massemis_g = massemis_g, dys = dys, emc_gl = emc_gl)
+  out <- data.frame(massemis_g = massemis_g, liter_total, dys = dys, emc_gl = emc_gl)
   
   return(out)
   
@@ -150,3 +157,55 @@ datgrp <- datgrp %>%
 datgrp
 ```
 
+## Groupings by wet/dry, season only
+
+Take `datgrp` object, remove site, storm grouping variable, sum mass emission and days by groupings for season, type, and trace metal/conventionals.
+```{r}
+datgrp_nosite <- datgrp %>% 
+  dplyr::select(-SITE, -UNIT, -STRM, -emc_gl, -massload_kgdy, -fluxrate_kgyrkm2) %>% 
+  group_by(AREAKM2, SEASON, TYPE, VAR) %>% 
+  summarise(
+    massemis_g = sum(massemis_g, na.rm = T),
+    liter_total = sum(liter_total, na.rm = T), 
+    dys = sum(dys, na.rm = T)
+    )
+datgrp_nosite
+```
+
+Calculate flow-weighted mean concentrations, estimate mass loadings as kg/day, and flux rates:
+```{r}
+datgrp_nosite <- datgrp_nosite %>% 
+  mutate(
+    emc_gl = massemis_g / liter_total,  
+    massload_kgdy = massemis_g * 1e-3 / dys,
+    fluxrate_kgyrkm2 =  massload_kgdy * 365 / AREAKM2
+  )
+datgrp_nosite
+```
+
+## Groupings by wet/dry only
+
+Repeat the above analysis but remove season grouping.
+
+```{r}
+datgrp_nosite_noseas <- datgrp %>% 
+  dplyr::select(-SEASON, -SITE, -UNIT, -STRM, -emc_gl, -massload_kgdy, -fluxrate_kgyrkm2) %>% 
+  group_by(AREAKM2, TYPE, VAR) %>% 
+  summarise(
+    massemis_g = sum(massemis_g, na.rm = T),
+    liter_total = sum(liter_total, na.rm = T), 
+    dys = sum(dys, na.rm = T)
+    )
+datgrp_nosite_noseas
+```
+
+Calculate flow-weighted mean concentrations, estimate mass loadings as kg/day, and flux rates:
+```{r}
+datgrp_nosite_noseas <- datgrp_nosite_noseas %>% 
+  mutate(
+    emc_gl = massemis_g / liter_total,  
+    massload_kgdy = massemis_g * 1e-3 / dys,
+    fluxrate_kgyrkm2 =  massload_kgdy * 365 / AREAKM2
+  )
+datgrp_nosite_noseas
+```
